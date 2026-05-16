@@ -13,6 +13,7 @@ data class SavedFood(
     val baseProteins: Double = 0.0,
     val baseFats: Double = 0.0,
     val baseSugar: Double = 0.0,
+    val portionSize: String = "",
     val parentId: Int? = null,
     val isCategory: Boolean = false
 )

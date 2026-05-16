@@ -29,12 +29,20 @@ class MainViewModel(
     private val _selectedDate = MutableStateFlow(LocalDate.now())
     val selectedDate: StateFlow<LocalDate> = _selectedDate.asStateFlow()
 
+    private val _searchQuery = MutableStateFlow("")
+    val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
+
     val foodEntries: StateFlow<List<FoodEntry>> = _selectedDate
         .flatMapLatest { date -> repository.getEntriesByDate(date) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val savedFoods: StateFlow<List<SavedFood>> = repository.allSavedFoods
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val filteredSavedFoods: StateFlow<List<SavedFood>> = combine(savedFoods, _searchQuery) { foods, query ->
+        if (query.isBlank()) foods
+        else foods.filter { it.name.contains(query, ignoreCase = true) && !it.isCategory }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val dailyTotals: StateFlow<DailyTotals> = foodEntries
         .map { entries ->
@@ -57,21 +65,29 @@ class MainViewModel(
 
     val weeklyAverageCalories: StateFlow<Double> = _selectedDate
         .flatMapLatest { date ->
-            val start = date.minusDays(6)
-            repository.getEntriesBetweenDates(start, date)
+            // Past 7 days (excluding today as per "before the current day")
+            val start = date.minusDays(7)
+            val end = date.minusDays(1)
+            repository.getEntriesBetweenDates(start, end)
         }
         .map { entries ->
             if (entries.isEmpty()) 0.0
             else {
                 val dailyTotals = entries.groupBy { it.date }
                     .mapValues { (_, dayEntries) -> dayEntries.sumOf { it.calories } }
-                dailyTotals.values.sum().toDouble() / 7.0
+                
+                // Average over only the days that actually have logs
+                dailyTotals.values.sum().toDouble() / dailyTotals.size.toDouble()
             }
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0.0)
 
     fun selectDate(date: LocalDate) {
         _selectedDate.value = date
+    }
+
+    fun setSearchQuery(query: String) {
+        _searchQuery.value = query
     }
 
     fun refreshData() {
@@ -119,6 +135,7 @@ class MainViewModel(
         proteins: Double = 0.0,
         fats: Double = 0.0,
         sugar: Double = 0.0,
+        portionSize: String = "",
         parentId: Int? = null,
         isCategory: Boolean = false
     ) {
@@ -131,6 +148,7 @@ class MainViewModel(
                     baseProteins = proteins,
                     baseFats = fats,
                     baseSugar = sugar,
+                    portionSize = portionSize,
                     parentId = parentId,
                     isCategory = isCategory
                 )
