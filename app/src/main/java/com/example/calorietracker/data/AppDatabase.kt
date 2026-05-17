@@ -8,8 +8,11 @@ import androidx.room.TypeConverters
 
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
-@Database(entities = [FoodEntry::class, SavedFood::class], version = 4, exportSchema = false)
+@Database(entities = [FoodEntry::class, SavedFood::class], version = 5, exportSchema = false)
 @TypeConverters(Converters::class)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun foodDao(): FoodDao
@@ -32,6 +35,12 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE saved_foods ADD COLUMN portionSize TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -39,7 +48,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "food_database"
                 )
-                .addMigrations(MIGRATION_2_3, MIGRATION_3_4)
+                .addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
                 .build()
                 INSTANCE = instance
                 instance

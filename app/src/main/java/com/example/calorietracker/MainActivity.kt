@@ -35,6 +35,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import com.example.calorietracker.data.AppDatabase
@@ -90,7 +91,7 @@ fun MainContainer(viewModel: MainViewModel) {
             }
         }
     ) { innerPadding ->
-        Box(modifier = Modifier.padding(innerPadding)) {
+        Box(modifier = Modifier.padding(bottom = innerPadding.calculateBottomPadding())) {
             when (currentScreen) {
                 Screen.Diary -> DiaryScreen(viewModel)
                 Screen.Library -> LibraryScreen(viewModel)
@@ -209,7 +210,7 @@ fun DiaryScreen(viewModel: MainViewModel) {
 
     if (showLogDialog) {
         LogFoodDialog(
-            savedFoods = savedFoods,
+            viewModel = viewModel,
             onDismiss = { showLogDialog = false },
             onConfirm = { food, mult ->
                 viewModel.logFood(food, mult)
@@ -235,9 +236,15 @@ fun DiaryScreen(viewModel: MainViewModel) {
 @Composable
 fun LibraryScreen(viewModel: MainViewModel) {
     val savedFoods by viewModel.savedFoods.collectAsState()
+    val searchQuery by viewModel.searchQuery.collectAsState()
     var showAddDialog by remember { mutableStateOf(false) }
     var foodToEdit by remember { mutableStateOf<SavedFood?>(null) }
+    var foodToDelete by remember { mutableStateOf<SavedFood?>(null) }
     val expandedNodes = remember { mutableStateOf(setOf<Int>()) }
+
+    LaunchedEffect(Unit) {
+        viewModel.setSearchQuery("")
+    }
 
     Scaffold(
         topBar = {
@@ -254,25 +261,69 @@ fun LibraryScreen(viewModel: MainViewModel) {
             }
         }
     ) { padding ->
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding),
-            contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            val rootNodes = savedFoods.filter { it.parentId == null }
-            rootNodes.forEach { node ->
-                foodTreeItems(
-                    node = node,
-                    allFoods = savedFoods,
-                    level = 0,
-                    expandedNodes = expandedNodes,
-                    onEdit = { foodToEdit = it },
-                    onDelete = { viewModel.deleteSavedFood(it) }
-                )
+        Column(modifier = Modifier.padding(padding)) {
+            OutlinedTextField(
+                value = searchQuery,
+                onValueChange = { viewModel.setSearchQuery(it) },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                placeholder = { Text("Search food items...") },
+                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                trailingIcon = {
+                    if (searchQuery.isNotEmpty()) {
+                        IconButton(onClick = { viewModel.setSearchQuery("") }) {
+                            Icon(Icons.Default.Clear, contentDescription = "Clear")
+                        }
+                    }
+                },
+                singleLine = true,
+                shape = RoundedCornerShape(12.dp)
+            )
+
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(bottom = 16.dp, start = 16.dp, end = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                if (searchQuery.isEmpty()) {
+                    val rootNodes = savedFoods.filter { it.parentId == null }
+                        .sortedWith(compareBy({ it.isCategory }, { it.name }))
+                    rootNodes.forEach { node ->
+                        foodTreeItems(
+                            node = node,
+                            allFoods = savedFoods,
+                            level = 0,
+                            expandedNodes = expandedNodes,
+                            onEdit = { foodToEdit = it },
+                            onDelete = { foodToDelete = it }
+                        )
+                    }
+                } else {
+                    val filteredFoods = savedFoods.filter { 
+                        it.name.contains(searchQuery, ignoreCase = true) && !it.isCategory 
+                    }
+                    items(filteredFoods) { food ->
+                        LibraryFoodCard(
+                            food = food,
+                            onEdit = { foodToEdit = it },
+                            onDelete = { foodToDelete = it }
+                        )
+                    }
+                }
             }
         }
+    }
+
+    if (foodToDelete != null) {
+        DeleteConfirmationDialog(
+            food = foodToDelete!!,
+            onDismiss = { foodToDelete = null },
+            onConfirm = {
+                viewModel.deleteSavedFood(foodToDelete!!)
+                foodToDelete = null
+            }
+        )
     }
 
     if (showAddDialog || foodToEdit != null) {
@@ -284,7 +335,7 @@ fun LibraryScreen(viewModel: MainViewModel) {
                     showAddDialog = false
                     foodToEdit = null
                 },
-                onConfirm = { name, cal, carb, prot, fat, sugar, parentId, isCategory ->
+                onConfirm = { name, cal, carb, prot, fat, sugar, portion, parentId, isCategory ->
                     if (foodToEdit != null) {
                         viewModel.updateSavedFood(foodToEdit!!, foodToEdit!!.copy(
                             name = name,
@@ -293,11 +344,12 @@ fun LibraryScreen(viewModel: MainViewModel) {
                             baseProteins = prot,
                             baseFats = fat,
                             baseSugar = sugar,
+                            portionSize = portion,
                             parentId = parentId,
                             isCategory = isCategory
                         ))
                     } else {
-                        viewModel.saveFoodToLibrary(name, cal, carb, prot, fat, sugar, parentId, isCategory)
+                        viewModel.saveFoodToLibrary(name, cal, carb, prot, fat, sugar, portion, parentId, isCategory)
                     }
                     showAddDialog = false
                     foodToEdit = null
@@ -350,7 +402,10 @@ fun SummaryHeader(totals: DailyTotals, weeklyAvg: Double) {
         modifier = Modifier
             .fillMaxWidth()
             .padding(16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer,
+            contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+        )
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(
@@ -438,7 +493,10 @@ fun LibraryFoodCard(
             .clickable(enabled = food.isCategory) { onToggleExpand() },
         shape = RoundedCornerShape(8.dp),
         colors = if (food.isCategory) 
-            CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant) 
+            CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.tertiaryContainer,
+                contentColor = MaterialTheme.colorScheme.onTertiaryContainer
+            ) 
         else 
             CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
     ) {
@@ -451,7 +509,7 @@ fun LibraryFoodCard(
                     imageVector = if (isExpanded) Icons.Default.KeyboardArrowDown else Icons.AutoMirrored.Filled.KeyboardArrowRight,
                     contentDescription = null,
                     modifier = Modifier.size(18.dp).padding(end = 4.dp),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    tint = MaterialTheme.colorScheme.onTertiaryContainer
                 )
             }
             Column(modifier = Modifier.weight(1f)) {
@@ -462,7 +520,7 @@ fun LibraryFoodCard(
                 )
                 if (!food.isCategory) {
                     Text(
-                        "${food.baseCalories} kcal | C:${food.baseCarbs}g P:${food.baseProteins}g F:${food.baseFats}g", 
+                        "${food.portionSize} | ${food.baseCalories} kcal | C:${food.baseCarbs}g P:${food.baseProteins}g F:${food.baseFats}g", 
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.secondary
                     )
@@ -480,17 +538,33 @@ fun LibraryFoodCard(
 
 @Composable
 fun LogFoodDialog(
-    savedFoods: List<SavedFood>,
+    viewModel: MainViewModel,
     onDismiss: () -> Unit,
     onConfirm: (SavedFood, Double) -> Unit
 ) {
+    val savedFoods by viewModel.savedFoods.collectAsState()
+    val searchQuery by viewModel.searchQuery.collectAsState()
+    val filteredSavedFoods by viewModel.filteredSavedFoods.collectAsState()
+    
     var navigationStack by remember { mutableStateOf(listOf<SavedFood>()) }
     var selectedFood by remember { mutableStateOf<SavedFood?>(null) }
     var multiplier by remember { mutableStateOf("1.0") }
 
-    val currentItems = remember(navigationStack, savedFoods) {
-        val parentId = navigationStack.lastOrNull()?.id
-        savedFoods.filter { it.parentId == parentId }
+    val isSearching = searchQuery.isNotEmpty()
+    val currentItems = remember(navigationStack, savedFoods, isSearching, filteredSavedFoods) {
+        if (isSearching) {
+            filteredSavedFoods.sortedBy { it.name }
+        } else {
+            val parentId = navigationStack.lastOrNull()?.id
+            savedFoods.filter { it.parentId == parentId }
+                .sortedWith(compareBy({ it.isCategory }, { it.name }))
+        }
+    }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            viewModel.setSearchQuery("")
+        }
     }
 
     AlertDialog(
@@ -498,7 +572,7 @@ fun LogFoodDialog(
         title = {
             Column {
                 Text("Log Food")
-                if (navigationStack.isNotEmpty()) {
+                if (!isSearching && navigationStack.isNotEmpty()) {
                     Text(
                         text = "Path: Root > " + navigationStack.joinToString(" > ") { it.name },
                         style = MaterialTheme.typography.bodySmall,
@@ -509,7 +583,24 @@ fun LogFoodDialog(
         },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (navigationStack.isNotEmpty()) {
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { viewModel.setSearchQuery(it) },
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text("Search all food...") },
+                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                    trailingIcon = {
+                        if (isSearching) {
+                            IconButton(onClick = { viewModel.setSearchQuery("") }) {
+                                Icon(Icons.Default.Clear, contentDescription = "Clear")
+                            }
+                        }
+                    },
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp)
+                )
+
+                if (!isSearching && navigationStack.isNotEmpty()) {
                     TextButton(
                         onClick = { 
                             navigationStack = navigationStack.dropLast(1)
@@ -532,7 +623,7 @@ fun LogFoodDialog(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clickable {
-                                        if (item.isCategory) {
+                                        if (item.isCategory && !isSearching) {
                                             navigationStack = navigationStack + item
                                             selectedFood = null
                                         } else {
@@ -556,10 +647,10 @@ fun LogFoodDialog(
                                     Column {
                                         Text(item.name, fontWeight = if (item.isCategory) FontWeight.Bold else FontWeight.Normal)
                                         if (!item.isCategory) {
-                                            Text("${item.baseCalories} kcal", style = MaterialTheme.typography.bodySmall)
+                                            Text("${item.portionSize} - ${item.baseCalories} kcal", style = MaterialTheme.typography.bodySmall)
                                         }
                                     }
-                                    if (item.isCategory) {
+                                    if (item.isCategory && !isSearching) {
                                         Spacer(Modifier.weight(1f))
                                         Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null)
                                     }
@@ -576,6 +667,16 @@ fun LogFoodDialog(
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     modifier = Modifier.fillMaxWidth()
                 )
+
+                if (selectedFood != null && !selectedFood!!.isCategory) {
+                    Text(
+                        text = "Logging: ${multiplier.ifEmpty { "0" }} x ${selectedFood!!.portionSize}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
+                }
             }
         },
         confirmButton = {
@@ -595,7 +696,7 @@ fun AddSavedFoodDialog(
     savedFoods: List<SavedFood>,
     foodToEdit: SavedFood? = null,
     onDismiss: () -> Unit,
-    onConfirm: (String, Int, Double, Double, Double, Double, Int?, Boolean) -> Unit
+    onConfirm: (String, Int, Double, Double, Double, Double, String, Int?, Boolean) -> Unit
 ) {
     var name by remember { mutableStateOf(foodToEdit?.name ?: "") }
     var calories by remember { mutableStateOf(foodToEdit?.baseCalories?.toString() ?: "") }
@@ -603,6 +704,7 @@ fun AddSavedFoodDialog(
     var proteins by remember { mutableStateOf(foodToEdit?.baseProteins?.toString() ?: "") }
     var fats by remember { mutableStateOf(foodToEdit?.baseFats?.toString() ?: "") }
     var sugar by remember { mutableStateOf(foodToEdit?.baseSugar?.toString() ?: "") }
+    var portionSize by remember { mutableStateOf(foodToEdit?.portionSize ?: "") }
     var parentId by remember { mutableStateOf(foodToEdit?.parentId) }
     var isCategory by remember { mutableStateOf(foodToEdit?.isCategory ?: false) }
     var expanded by remember { mutableStateOf(false) }
@@ -623,6 +725,7 @@ fun AddSavedFoodDialog(
                 OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Name") }, modifier = Modifier.fillMaxWidth())
                 
                 if (!isCategory) {
+                    OutlinedTextField(value = portionSize, onValueChange = { portionSize = it }, label = { Text("Initial Portion Size (e.g., 1 cup, 100g)") }, modifier = Modifier.fillMaxWidth())
                     OutlinedTextField(value = calories, onValueChange = { calories = it }, label = { Text("Calories") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth())
                     OutlinedTextField(value = carbs, onValueChange = { carbs = it }, label = { Text("Carbs (g)") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth())
                     OutlinedTextField(value = proteins, onValueChange = { proteins = it }, label = { Text("Protein (g)") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth())
@@ -720,6 +823,7 @@ fun AddSavedFoodDialog(
                     proteins.trim().toDoubleOrNull() ?: (foodToEdit?.baseProteins ?: 0.0),
                     fats.trim().toDoubleOrNull() ?: (foodToEdit?.baseFats ?: 0.0),
                     sugar.trim().toDoubleOrNull() ?: (foodToEdit?.baseSugar ?: 0.0),
+                    portionSize.trim(),
                     parentId,
                     isCategory
                 )
@@ -1017,4 +1121,37 @@ fun DateItem(date: LocalDate, isSelected: Boolean, totalCalories: Double, dailyL
             Spacer(modifier = Modifier.size(8.dp))
         }
     }
+}
+
+@Composable
+fun DeleteConfirmationDialog(
+    food: SavedFood,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Delete ${if (food.isCategory) "Category" else "Item"}?") },
+        text = {
+            Text(
+                if (food.isCategory) 
+                    "Are you sure you want to delete the category '${food.name}'? This will also delete all items and sub-categories inside it. This action cannot be undone."
+                else 
+                    "Are you sure you want to delete '${food.name}' from your library?"
+            )
+        },
+        confirmButton = {
+            Button(
+                onClick = onConfirm,
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+            ) {
+                Text("Delete")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
 }

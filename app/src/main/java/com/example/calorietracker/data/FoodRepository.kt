@@ -35,9 +35,7 @@ class FoodRepository(private val foodDao: FoodDao) {
     // Saved Foods
     val allSavedFoods: Flow<List<SavedFood>> = foodDao.getAllSavedFoods()
 
-    suspend fun insertSavedFood(food: SavedFood) {
-        foodDao.insertSavedFood(food)
-    }
+    suspend fun insertSavedFood(food: SavedFood): Long = foodDao.insertSavedFood(food)
 
     suspend fun updateSavedFood(food: SavedFood) {
         foodDao.updateSavedFood(food)

@@ -24,7 +24,7 @@ interface FoodDao {
 
     // Saved Foods (Library)
     @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insertSavedFood(food: SavedFood)
+    suspend fun insertSavedFood(food: SavedFood): Long
 
     @Update
     suspend fun updateSavedFood(food: SavedFood)
@@ -40,6 +40,12 @@ interface FoodDao {
 
     @Query("SELECT * FROM saved_foods ORDER BY name ASC")
     fun getAllSavedFoods(): Flow<List<SavedFood>>
+
+    @Query("SELECT * FROM saved_foods")
+    suspend fun getSavedFoodsList(): List<SavedFood>
+
+    @Query("SELECT COUNT(*) FROM saved_foods")
+    suspend fun getSavedFoodCount(): Int
 
     @Query("SELECT date, SUM(calories) as totalCalories FROM food_entries GROUP BY date")
     fun getDailyTotals(): Flow<List<DailyTotal>>
