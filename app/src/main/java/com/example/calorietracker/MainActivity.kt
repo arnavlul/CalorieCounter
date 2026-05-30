@@ -325,11 +325,26 @@ fun LibraryScreen(viewModel: MainViewModel) {
                     }
                 } else {
                     val filteredFoods = savedFoods.filter { 
-                        it.name.contains(searchQuery, ignoreCase = true) && !it.isCategory 
+                        it.name.contains(searchQuery, ignoreCase = true)
                     }
-                    items(filteredFoods) { food ->
-                        LibraryFoodCard(
-                            food = food,
+                    val rootMatches = filteredFoods.filter { match ->
+                        var parent = savedFoods.find { it.id == match.parentId }
+                        var ancestorMatched = false
+                        while (parent != null) {
+                            if (filteredFoods.any { it.id == parent!!.id }) {
+                                ancestorMatched = true
+                                break
+                            }
+                            parent = savedFoods.find { it.id == parent!!.parentId }
+                        }
+                        !ancestorMatched
+                    }
+                    rootMatches.forEach { food ->
+                        foodTreeItems(
+                            node = food,
+                            allFoods = savedFoods,
+                            level = 0,
+                            expandedNodes = expandedNodes,
                             onEdit = { foodToEdit = it },
                             onDelete = { foodToDelete = it }
                         )
@@ -393,7 +408,7 @@ fun androidx.compose.foundation.lazy.LazyListScope.foodTreeItems(
 ) {
     val isExpanded = expandedNodes.value.contains(node.id)
     
-    item(key = "food_${node.id}") {
+    item(key = "food_${node.id}_${node.parentId ?: 0}_${level}") {
         LibraryFoodCard(
             food = node,
             level = level,

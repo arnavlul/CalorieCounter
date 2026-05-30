@@ -41,7 +41,7 @@ class MainViewModel(
 
     val filteredSavedFoods: StateFlow<List<SavedFood>> = combine(savedFoods, _searchQuery) { foods, query ->
         if (query.isBlank()) foods
-        else foods.filter { it.name.contains(query, ignoreCase = true) && !it.isCategory }
+        else foods.filter { it.name.contains(query, ignoreCase = true) }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val dailyTotals: StateFlow<DailyTotals> = foodEntries
