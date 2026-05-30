@@ -15,6 +15,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -37,7 +38,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import com.example.calorietracker.data.InitialData
 import com.example.calorietracker.data.AppDatabase
 import com.example.calorietracker.data.FoodEntry
 import com.example.calorietracker.data.FoodRepository
@@ -60,9 +63,15 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        
+        lifecycleScope.launch(Dispatchers.IO) {
+            InitialData.populateDatabase(database.foodDao())
+        }
+
         enableEdgeToEdge()
         setContent {
-            CalorieTrackerTheme {
+            val themeName by viewModel.themeName.collectAsState()
+            CalorieTrackerTheme(themeName = themeName) {
                 MainContainer(viewModel)
             }
         }
@@ -113,8 +122,9 @@ fun DiaryScreen(viewModel: MainViewModel) {
 
     var showLogDialog by remember { mutableStateOf(false) }
     var entryToEdit by remember { mutableStateOf<FoodEntry?>(null) }
+    var entryToDelete by remember { mutableStateOf<FoodEntry?>(null) }
     var showFullCalendar by remember { mutableStateOf(false) }
-    var showLimitDialog by remember { mutableStateOf(false) }
+    var showSettingsDialog by remember { mutableStateOf(false) }
     
     var isRefreshing by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
@@ -130,8 +140,8 @@ fun DiaryScreen(viewModel: MainViewModel) {
                     IconButton(onClick = { showFullCalendar = true }) {
                         Icon(Icons.Default.DateRange, contentDescription = "Full Calendar")
                     }
-                    IconButton(onClick = { showLimitDialog = true }) {
-                        Icon(Icons.Default.Settings, contentDescription = "Set Limit")
+                    IconButton(onClick = { showSettingsDialog = true }) {
+                        Icon(Icons.Default.Settings, contentDescription = "Settings")
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -180,27 +190,30 @@ fun DiaryScreen(viewModel: MainViewModel) {
                     )
                 }
 
-                if (showLimitDialog) {
-                    LimitSettingDialog(
+                val themeName by viewModel.themeName.collectAsState()
+                if (showSettingsDialog) {
+                    SettingsDialog(
                         currentLimit = dailyLimit,
-                        onConfirm = { 
-                            viewModel.updateDailyCalorieLimit(it)
-                            showLimitDialog = false
+                        currentTheme = themeName,
+                        onConfirm = { limit, theme ->
+                            viewModel.updateDailyCalorieLimit(limit)
+                            viewModel.updateThemeName(theme)
+                            showSettingsDialog = false
                         },
-                        onDismiss = { showLimitDialog = false }
+                        onDismiss = { showSettingsDialog = false }
                     )
                 }
 
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(16.dp),
+                    contentPadding = PaddingValues(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 80.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     items(foodEntries) { entry ->
                         LogEntryCard(
                             entry, 
                             onEdit = { entryToEdit = it },
-                            onDelete = { viewModel.deleteEntry(it) }
+                            onDelete = { entryToDelete = it }
                         )
                     }
                 }
@@ -227,6 +240,17 @@ fun DiaryScreen(viewModel: MainViewModel) {
             onConfirm = { updatedEntry ->
                 viewModel.updateEntry(updatedEntry)
                 entryToEdit = null
+            }
+        )
+    }
+
+    if (entryToDelete != null) {
+        DeleteEntryConfirmationDialog(
+            entry = entryToDelete!!,
+            onDismiss = { entryToDelete = null },
+            onConfirm = {
+                viewModel.deleteEntry(entryToDelete!!)
+                entryToDelete = null
             }
         )
     }
@@ -283,7 +307,7 @@ fun LibraryScreen(viewModel: MainViewModel) {
 
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(bottom = 16.dp, start = 16.dp, end = 16.dp),
+                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 80.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 if (searchQuery.isEmpty()) {
@@ -889,22 +913,95 @@ fun EditLogEntryDialog(
 }
 
 @Composable
-fun LimitSettingDialog(currentLimit: Int, onConfirm: (Int) -> Unit, onDismiss: () -> Unit) {
+fun SettingsDialog(
+    currentLimit: Int,
+    currentTheme: String,
+    onConfirm: (Int, String) -> Unit,
+    onDismiss: () -> Unit
+) {
     var limitText by remember { mutableStateOf(currentLimit.toString()) }
+    var selectedTheme by remember { mutableStateOf(currentTheme) }
+
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Daily Calorie Limit") },
+        title = { Text("Settings", fontWeight = FontWeight.Bold) },
         text = {
-            OutlinedTextField(
-                value = limitText,
-                onValueChange = { if (it.all { char -> char.isDigit() }) limitText = it },
-                label = { Text("Limit") },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                modifier = Modifier.fillMaxWidth()
-            )
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                // Section 1: Calorie Limit
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Daily Calorie Limit", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    OutlinedTextField(
+                        value = limitText,
+                        onValueChange = { if (it.all { char -> char.isDigit() }) limitText = it },
+                        label = { Text("Limit (kcal)") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+
+                HorizontalDivider()
+
+                // Section 2: Themes List
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("App Theme", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    
+                    val themes = listOf(
+                        Triple("classic", "Classic (Sage & Peach)", listOf(Color(0xFF66BB6A), Color(0xFFFFA726), Color(0xFFAB47BC))),
+                        Triple("monochrome", "Monochrome (Black & Grey)", listOf(Color(0xFF212121), Color(0xFF757575), Color(0xFFE0E0E0))),
+                        Triple("midnight", "Midnight (Navy & Slate)", listOf(Color(0xFF1A237E), Color(0xFF0D47A1), Color(0xFFBBDEFB))),
+                        Triple("forest", "Forest (Green & Mint)", listOf(Color(0xFF1B5E20), Color(0xFF2E7D32), Color(0xFFC8E6C9)))
+                    )
+
+                    themes.forEach { (themeId, themeLabel, colorList) ->
+                        val isSelected = selectedTheme == themeId
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { selectedTheme = themeId },
+                            shape = RoundedCornerShape(12.dp),
+                            border = if (isSelected) BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                            color = if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f) else MaterialTheme.colorScheme.surface
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(16.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    text = themeLabel,
+                                    style = MaterialTheme.typography.bodyLarge.copy(
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                    ),
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    colorList.forEach { color ->
+                                        Box(
+                                            modifier = Modifier
+                                                .size(16.dp)
+                                                .clip(CircleShape)
+                                                .background(color)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         },
         confirmButton = {
-            Button(onClick = { onConfirm(limitText.toIntOrNull() ?: currentLimit) }) {
+            Button(
+                onClick = { 
+                    val limit = limitText.toIntOrNull() ?: currentLimit
+                    onConfirm(limit, selectedTheme)
+                }
+            ) {
                 Text("Save")
             }
         },
@@ -1139,6 +1236,34 @@ fun DeleteConfirmationDialog(
                 else 
                     "Are you sure you want to delete '${food.name}' from your library?"
             )
+        },
+        confirmButton = {
+            Button(
+                onClick = onConfirm,
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+            ) {
+                Text("Delete")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
+}
+
+@Composable
+fun DeleteEntryConfirmationDialog(
+    entry: FoodEntry,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Delete Log Entry?") },
+        text = {
+            Text("Are you sure you want to delete '${entry.foodName}' from your diary?")
         },
         confirmButton = {
             Button(

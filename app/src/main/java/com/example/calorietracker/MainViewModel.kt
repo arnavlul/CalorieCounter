@@ -63,6 +63,9 @@ class MainViewModel(
     val dailyCalorieLimit: StateFlow<Int> = settingsRepository.dailyCalorieLimit
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), settingsRepository.getDailyCalorieLimitValue())
 
+    val themeName: StateFlow<String> = settingsRepository.themeName
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), settingsRepository.getThemeNameValue())
+
     val weeklyAverageCalories: StateFlow<Double> = _selectedDate
         .flatMapLatest { date ->
             // Past 7 days (excluding today as per "before the current day")
@@ -188,6 +191,10 @@ class MainViewModel(
 
     fun updateDailyCalorieLimit(limit: Int) {
         settingsRepository.setDailyCalorieLimit(limit)
+    }
+
+    fun updateThemeName(theme: String) {
+        settingsRepository.setThemeName(theme)
     }
 }
 
