@@ -40,7 +40,6 @@ import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import com.example.calorietracker.data.InitialData
 import com.example.calorietracker.data.AppDatabase
 import com.example.calorietracker.data.FoodEntry
 import com.example.calorietracker.data.FoodRepository
@@ -64,10 +63,6 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
-        lifecycleScope.launch(Dispatchers.IO) {
-            InitialData.populateDatabase(database.foodDao())
-        }
-
         enableEdgeToEdge()
         setContent {
             val themeName by viewModel.themeName.collectAsState()
